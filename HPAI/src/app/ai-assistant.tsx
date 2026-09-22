@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; // Đã sửa dòng này
-import { useRouter } from 'expo-router';
+import { Href, useRouter } from 'expo-router';
 
 export default function AiAssistantScreen() {
   const router = useRouter();
@@ -26,9 +26,10 @@ export default function AiAssistantScreen() {
         <Text style={styles.sectionTitle}>Translate</Text>
         
         <View style={styles.grid}>
-          <TouchableOpacity style={styles.cardHalf}>
+          <TouchableOpacity style={styles.cardHalf} onPress={() => router.push('/translate' as Href)}>
             <Text style={styles.icon}>📄</Text>
             <Text style={styles.cardTitle}>Text translation</Text>
+            <Text style={styles.cardSubtitle}>Thư viện ngôn ngữ</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.cardHalf}>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router'; 
+import { Href, useRouter } from 'expo-router'; 
 
 export default function Index() {
   const router = useRouter();
@@ -38,8 +38,11 @@ export default function Index() {
 
         {/* Nút bấm đã được cài đặt lệnh chuyển trang router.push */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={[styles.btn, styles.btnDiscovery]}>
-            <Text style={styles.txtDiscovery}>Discovery</Text>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnDiscovery]}
+            onPress={() => router.push('/translate' as Href)}
+          >
+            <Text style={styles.txtDiscovery}>Dịch Ê Đê</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
