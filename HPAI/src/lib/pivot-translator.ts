@@ -1,4 +1,4 @@
-import type { AppLangId } from '@/data/language-library';
+import type { AppLangId, AppLang } from '@/data/language-library';
 import { getLang } from '@/data/language-library';
 import {
   DIGIT_EDE,
@@ -9,11 +9,14 @@ import {
   type LexEntry,
   VI_DIGIT,
 } from '@/data/ede-lexicon';
+import { geminiTranslate, geminiSuggestEde, hasGeminiKey } from '@/lib/gemini-translator';
 
 export type TranslateStep = {
   label: string;
   text: string;
 };
+
+export type AiSuggestion = { word: string; guess: string };
 
 export type TranslateResult = {
   output: string;
@@ -24,6 +27,8 @@ export type TranslateResult = {
   unmatched: string[];
   usedOnlinePivot: boolean;
   needsNetwork: boolean;
+  /** Gợi ý từ Gemini cho từ Ê Đê còn thiếu — LUÔN hiển thị riêng, có cảnh báo "AI, chưa kiểm chứng". */
+  aiSuggestions?: AiSuggestion[];
 };
 
 const EDE_SCRIPT = /[ƀčñĕĭŏŭɃČÑĔĬŎŬ]|[êôơưÊÔƠƯ]\u0306/;
@@ -65,7 +70,15 @@ export function detectLanguage(text: string): Lang {
   const vi = lexiconCoverage(raw, 'vi');
   const en = lexiconCoverage(raw, 'en');
   const best = Math.max(ede, vi, en);
-  if (best < 0.25) return 'vi';
+
+  if (best < 0.25) {
+    // Không khớp từ điển nào. Văn bản thuần ASCII (không dấu, không ký tự
+    // Êđê) nhiều khả năng là tiếng Anh/ngôn ngữ khác hơn là tiếng Việt —
+    // đoán 'en' để còn cơ hội đi tiếp nhánh dịch mạng, thay vì mặc định
+    // 'vi' và bỏ lỡ hẳn bước gọi Gemini.
+    const asciiOnly = /^[\x00-\x7F]*$/.test(raw);
+    return asciiOnly ? 'en' : 'vi';
+  }
   if (ede >= vi && ede >= en) return 'ede';
   if (en > vi && en > ede) return 'en';
   return 'vi';
@@ -204,8 +217,9 @@ function greedyMatch(
     if (n !== null) {
       if (toward === 'ede') pieces.push(numberToEde(n));
       else pieces.push(String(n));
-    } else if (toward === 'vi' && DROP_VI.has(tok)) {
-      if (source !== 'vi') unmatched.push(tok);
+    } else if (source === 'vi' && DROP_VI.has(tok)) {
+      // Từ đệm tiếng Việt (là, của, một...) — bỏ qua êm, không tính là "chưa có trong từ điển"
+      // vì bản thân nó không cần dịch, dù đích là 'vi', 'ede' hay 'en'.
     } else {
       unmatched.push(tok);
       pieces.push(tok);
@@ -255,6 +269,7 @@ function tidy(text: string, target: Lang, askedQuestion: boolean): string {
   return out;
 }
 
+/** MyMemory — dùng làm fallback khi không có Gemini API key. */
 async function myMemory(text: string, fromIso: string, toIso: string): Promise<string | null> {
   try {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${fromIso}|${toIso}`;
@@ -267,6 +282,30 @@ async function myMemory(text: string, fromIso: string, toIso: string): Promise<s
   } catch {
     return null;
   }
+}
+
+const LANG_LABEL_VI: Record<'vi' | 'en', string> = { vi: 'Tiếng Việt', en: 'English' };
+
+/** Gemini trước, MyMemory sau nếu không có key hoặc Gemini lỗi. Dùng cho cặp vi/en nội bộ. */
+async function onlineViEn(text: string, from: 'vi' | 'en', to: 'vi' | 'en'): Promise<string | null> {
+  if (hasGeminiKey()) {
+    const viaGemini = await geminiTranslate(text, LANG_LABEL_VI[from], LANG_LABEL_VI[to]);
+    if (viaGemini) return viaGemini;
+  }
+  return myMemory(text, from, to);
+}
+
+/** Gọi Gemini gợi ý cho tối đa 6 từ tiếng Việt chưa có trong từ điển Ê Đê. Luôn kèm cảnh báo ở nơi hiển thị. */
+async function suggestEdeForUnmatched(unmatched: string[]): Promise<AiSuggestion[]> {
+  if (!hasGeminiKey() || unmatched.length === 0) return [];
+  const candidates = [...new Set(unmatched)].filter((w) => w.length > 1).slice(0, 6);
+  const results = await Promise.all(
+    candidates.map(async (word) => {
+      const guess = await geminiSuggestEde(word);
+      return guess ? { word, guess } : null;
+    })
+  );
+  return results.filter((r): r is AiSuggestion => r !== null);
 }
 
 export async function translatePivot(options: {
@@ -304,7 +343,7 @@ export async function translatePivot(options: {
     vietnamese = local.pieces.filter((p) => !DROP_VI.has(fold(p))).join(' ');
     const coverageBad = local.unmatched.length > 0 && local.unmatched.length >= local.pieces.length * 0.4;
     if (useOnlinePivot && coverageBad && source === 'en') {
-      const online = await myMemory(text, 'en', 'vi');
+      const online = await onlineViEn(text, 'en', 'vi');
       if (online) {
         vietnamese = fold(online);
         usedOnlinePivot = true;
@@ -321,7 +360,21 @@ export async function translatePivot(options: {
   const transferred = applyVietnameseTransfer(vietnamese, target);
   if (transferred) {
     const output = tidy(transferred, target, askedQuestion);
-    return { output, source, target, pivotVietnamese: vietnamese, steps, unmatched, usedOnlinePivot, needsNetwork: false };
+    const result: TranslateResult = {
+      output,
+      source,
+      target,
+      pivotVietnamese: vietnamese,
+      steps,
+      unmatched,
+      usedOnlinePivot,
+      needsNetwork: false,
+    };
+    if (target === 'ede' && useOnlinePivot) {
+      const ai = await suggestEdeForUnmatched(unmatched);
+      if (ai.length) result.aiSuggestions = ai;
+    }
+    return result;
   }
 
   const toward = greedyMatch(vietnamese, 'vi', target);
@@ -329,7 +382,7 @@ export async function translatePivot(options: {
   let output = toward.pieces.filter((p) => !DROP_VI.has(fold(p))).join(' ');
 
   if (useOnlinePivot && target === 'en' && toward.unmatched.length > 0) {
-    const online = await myMemory(vietnamese, 'vi', 'en');
+    const online = await onlineViEn(vietnamese, 'vi', 'en');
     if (online) {
       output = online;
       usedOnlinePivot = true;
@@ -337,7 +390,23 @@ export async function translatePivot(options: {
   }
 
   output = tidy(output, target, askedQuestion);
-  return { output, source, target, pivotVietnamese: vietnamese, steps, unmatched, usedOnlinePivot, needsNetwork: false };
+  const result: TranslateResult = {
+    output,
+    source,
+    target,
+    pivotVietnamese: vietnamese,
+    steps,
+    unmatched,
+    usedOnlinePivot,
+    needsNetwork: false,
+  };
+
+  if (target === 'ede' && useOnlinePivot) {
+    const ai = await suggestEdeForUnmatched(unmatched);
+    if (ai.length) result.aiSuggestions = ai;
+  }
+
+  return result;
 }
 
 const LEXICON_LANGS = new Set<string>(['vi', 'en', 'ede']);
@@ -359,6 +428,25 @@ function emptyResult(
     needsNetwork: false,
     ...extra,
   };
+}
+
+/** Dịch trực tiếp qua Gemini (không cần vòng qua tiếng Việt); fallback MyMemory qua vi nếu không có key. */
+async function onlineDirect(
+  text: string,
+  sourceMeta: AppLang,
+  targetMeta: AppLang
+): Promise<{ output: string; pivotVietnamese: string } | null> {
+  if (hasGeminiKey()) {
+    const direct = await geminiTranslate(text, sourceMeta.label, targetMeta.label);
+    if (direct) return { output: direct, pivotVietnamese: '' };
+  }
+  if (!sourceMeta.iso || !targetMeta.iso) return null;
+  const viaVi = sourceMeta.id === 'vi' ? text : await myMemory(text, sourceMeta.iso, 'vi');
+  if (!viaVi) return null;
+  if (targetMeta.id === 'vi') return { output: viaVi, pivotVietnamese: viaVi };
+  const online = await myMemory(viaVi, 'vi', targetMeta.iso);
+  if (!online) return null;
+  return { output: online, pivotVietnamese: viaVi };
 }
 
 export async function translateText(options: {
@@ -401,14 +489,16 @@ export async function translateText(options: {
   const sourceMeta = getLang(source);
   const targetMeta = getLang(target);
 
-  // … → Ê Đê: mạng ra tiếng Việt, rồi từ điển Ê Đê
+  // … → Ê Đê: dịch ra tiếng Việt trước (Gemini ưu tiên), rồi qua từ điển Ê Đê nội bộ
   if (target === 'ede') {
     const vietnamese =
       source === 'vi'
         ? raw
-        : sourceMeta.iso
-          ? await myMemory(raw, sourceMeta.iso, 'vi')
-          : null;
+        : hasGeminiKey()
+          ? await geminiTranslate(raw, sourceMeta.label, 'Tiếng Việt')
+          : sourceMeta.iso
+            ? await myMemory(raw, sourceMeta.iso, 'vi')
+            : null;
     if (!vietnamese) {
       return emptyResult(raw, source, target, {
         output: '',
@@ -422,10 +512,18 @@ export async function translateText(options: {
       target: 'ede',
       useOnlinePivot: false,
     });
-    return { ...local, source, target, usedOnlinePivot: source !== 'vi', needsNetwork: source !== 'vi' };
+    const aiSuggestions = await suggestEdeForUnmatched(local.unmatched);
+    return {
+      ...local,
+      source,
+      target,
+      usedOnlinePivot: source !== 'vi',
+      needsNetwork: source !== 'vi',
+      ...(aiSuggestions.length ? { aiSuggestions } : {}),
+    };
   }
 
-  // Ê Đê → …: từ điển ra tiếng Việt, rồi mạng sang đích
+  // Ê Đê → …: từ điển nội bộ ra tiếng Việt trước, rồi Gemini (hoặc MyMemory) sang đích
   if (source === 'ede') {
     const mid = await translatePivot({
       text: raw,
@@ -434,10 +532,14 @@ export async function translateText(options: {
       useOnlinePivot: false,
     });
     if (target === 'vi') return { ...mid, source: 'ede', target: 'vi' };
-    if (!targetMeta.iso) {
+    if (!targetMeta.iso && !hasGeminiKey()) {
       return { ...mid, source, target, output: mid.output, needsNetwork: true };
     }
-    const online = await myMemory(mid.output, 'vi', targetMeta.iso);
+    const online = hasGeminiKey()
+      ? await geminiTranslate(mid.output, 'Tiếng Việt', targetMeta.label)
+      : targetMeta.iso
+        ? await myMemory(mid.output, 'vi', targetMeta.iso)
+        : null;
     return {
       ...mid,
       source,
@@ -449,47 +551,20 @@ export async function translateText(options: {
     };
   }
 
-  if (!sourceMeta.iso || !targetMeta.iso) {
-    return emptyResult(raw, source, target, {
-      output: '',
-      unmatched: [raw],
-      needsNetwork: true,
-    });
-  }
-
-  // Cặp mạng khác: nguồn → tiếng Việt → đích
-  const viaVi =
-    source === 'vi' ? raw : await myMemory(raw, sourceMeta.iso, 'vi');
-  if (!viaVi) {
-    return emptyResult(raw, source, target, {
-      output: '',
-      unmatched: [raw],
-      needsNetwork: true,
-      usedOnlinePivot: true,
-    });
-  }
-  if (target === 'vi') {
-    return emptyResult(viaVi, source, target, {
-      usedOnlinePivot: true,
-      needsNetwork: true,
-      pivotVietnamese: viaVi,
-    });
-  }
-  const online = await myMemory(viaVi, 'vi', targetMeta.iso);
+  // Cặp ngôn ngữ mạng khác (không liên quan Ê Đê): Gemini dịch thẳng, MyMemory qua vi là phương án dự phòng
+  const online = await onlineDirect(raw, sourceMeta, targetMeta);
   if (!online) {
     return emptyResult(raw, source, target, {
-      output: viaVi,
+      output: '',
       unmatched: [raw],
       needsNetwork: true,
       usedOnlinePivot: true,
-      pivotVietnamese: viaVi,
     });
   }
-
-  return emptyResult(online, source, target, {
+  return emptyResult(online.output, source, target, {
     usedOnlinePivot: true,
     needsNetwork: true,
-    pivotVietnamese: viaVi,
+    pivotVietnamese: online.pivotVietnamese,
   });
 }
 

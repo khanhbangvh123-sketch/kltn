@@ -14,13 +14,27 @@ export type AppLangId =
   | 'es'
   | 'de'
   | 'ru'
-  | 'hi';
+  | 'hi'
+  // Thêm mới — dịch qua Gemini
+  | 'it'
+  | 'pt'
+  | 'ar'
+  | 'tr'
+  | 'ms'
+  | 'tl'
+  | 'pl'
+  | 'nl'
+  | 'sv'
+  | 'uk'
+  | 'bn'
+  | 'my'
+  | 'mn';
 
 export type AppLang = {
   id: AppLangId;
   label: string;
   short: string;
-  /** Mã MyMemory / ISO 639-1. null = chỉ từ điển nội bộ (Ê Đê). */
+  /** Mã MyMemory / ISO 639-1, dùng làm fallback khi không có Gemini key. null = chỉ từ điển nội bộ (Ê Đê). */
   iso: string | null;
   needsNetwork: boolean;
 };
@@ -41,6 +55,19 @@ export const LANGUAGE_LIBRARY: AppLang[] = [
   { id: 'de', label: 'Deutsch', short: 'Đức', iso: 'de', needsNetwork: true },
   { id: 'ru', label: 'Русский', short: 'Nga', iso: 'ru', needsNetwork: true },
   { id: 'hi', label: 'हिन्दी', short: 'Hindi', iso: 'hi', needsNetwork: true },
+  { id: 'it', label: 'Italiano', short: 'Ý', iso: 'it', needsNetwork: true },
+  { id: 'pt', label: 'Português', short: 'Bồ Đào Nha', iso: 'pt', needsNetwork: true },
+  { id: 'ar', label: 'العربية', short: 'Ả Rập', iso: 'ar', needsNetwork: true },
+  { id: 'tr', label: 'Türkçe', short: 'Thổ Nhĩ Kỳ', iso: 'tr', needsNetwork: true },
+  { id: 'ms', label: 'Bahasa Melayu', short: 'Mã Lai', iso: 'ms', needsNetwork: true },
+  { id: 'tl', label: 'Filipino', short: 'Philippines', iso: 'tl', needsNetwork: true },
+  { id: 'pl', label: 'Polski', short: 'Ba Lan', iso: 'pl', needsNetwork: true },
+  { id: 'nl', label: 'Nederlands', short: 'Hà Lan', iso: 'nl', needsNetwork: true },
+  { id: 'sv', label: 'Svenska', short: 'Thụy Điển', iso: 'sv', needsNetwork: true },
+  { id: 'uk', label: 'Українська', short: 'Ukraina', iso: 'uk', needsNetwork: true },
+  { id: 'bn', label: 'বাংলা', short: 'Bengal', iso: 'bn', needsNetwork: true },
+  { id: 'my', label: 'မြန်မာ', short: 'Myanmar', iso: 'my', needsNetwork: true },
+  { id: 'mn', label: 'Монгол', short: 'Mông Cổ', iso: 'mn', needsNetwork: true },
 ];
 
 export const INPUT_LANGUAGES: AppLang[] = [

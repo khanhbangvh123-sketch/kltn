@@ -191,6 +191,21 @@ export default function TranslateScreen() {
           </View>
         ) : null}
 
+        {result?.aiSuggestions?.length ? (
+          <View style={styles.aiBox}>
+            <Text style={styles.aiWarnTitle}>⚠ Gợi ý từ AI — chưa kiểm chứng</Text>
+            <Text style={styles.aiWarnSub}>
+              Đây là suy đoán của Gemini, KHÔNG lấy từ nguồn Ê Đê đáng tin cậy. Chỉ dùng tham
+              khảo, nên nhờ người Ê Đê bản ngữ xác nhận trước khi dùng thật.
+            </Text>
+            {result.aiSuggestions.map((s) => (
+              <Text key={s.word} style={styles.aiItem}>
+                {s.word} → {s.guess}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+
         <Text style={styles.sectionTitle}>Thử nhanh</Text>
         <View style={styles.chips}>
           {EXAMPLES.map((example) => (
@@ -365,6 +380,17 @@ const styles = StyleSheet.create({
   resultText: { color: '#FFF', fontSize: 22, fontWeight: '700' },
   meta: { color: '#666', fontSize: 12, marginTop: 10 },
   warn: { color: '#E6B800', fontSize: 12, marginTop: 8 },
+  aiBox: {
+    backgroundColor: '#241C0F',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#5A4620',
+  },
+  aiWarnTitle: { color: '#E6B800', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  aiWarnSub: { color: '#B8A467', fontSize: 11, lineHeight: 16, marginBottom: 8 },
+  aiItem: { color: '#EEE', fontSize: 14, marginTop: 2 },
   sectionTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
